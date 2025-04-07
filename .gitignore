@@ -1,0 +1,4 @@
+!.gitignore
+.gdb*
+*.o
+up
