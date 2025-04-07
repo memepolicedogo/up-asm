@@ -10,4 +10,4 @@ To build with dwarf debug info run `build.sh debug`\
  - Improve error reporting (Currently just exits without any message and without undoing anything)
  - Improve handling of symlinks
  - Improve memory management
-
+ - Improve comments

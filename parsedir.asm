@@ -2,7 +2,7 @@ section .text
 global parsedir
 parsedir:
 	; void parsedir(char[] *dirname, char[] *newpath)
-	; Alocate memory
+	; Alocate memory for dents
 	mov	rax, 9		; sys_mmap
 	mov	rdi, 0		; kernel determines addr
 	mov	rsi, 0x8000	; Length in hex

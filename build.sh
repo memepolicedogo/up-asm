@@ -12,8 +12,8 @@ fi
 opts="-f elf64"
 if [[ -n $1 && $1 == "debug" ]];
 then
-	echo "Building for debug"
-	$opts="-f elf64 -g -F dwarf"
+	opts="-f elf64 -g -F dwarf"
+	echo "Building with options \"$opts\""
 fi
 
 # Build parsedir object
