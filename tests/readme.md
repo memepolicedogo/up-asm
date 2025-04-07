@@ -25,23 +25,23 @@ In most cases, the `gitignore.example` found in the same directory as this readm
 **2. A `setup.sh`**\
 This script should do exactly what you'd expect, setup the environment for the test.\
 A valid `setup.sh` has a few requirements:
- - Minimal dependencies
+ - Minimal dependencies\
 Try to avoid using outside programs wherever possible, any dependencies outside of core utils should be checked for prior to any kind of setup
- - Cleanup
+ - Cleanup\
 Cleanup should occur before the setup, and must, at minimum, clean the environment assuming a successful completion of the test, ideally cleanup should work even if the test fails, but this isn't always realistic
- - Fail safe
+ - Fail safe\
 Try to ensure that if some part of the setup fails the script dies gracefully, but at minimum the user should be notified if the environment may not be as expected
- - Persistent, local changes
+ - Persistent, local changes\
 The setup should only make static changes that apply only to the testing environment, any changes that could be lost by restarting your system (e.g. environment variables, background proccesses, etc.) should be part of the test procedure, not the setup
- - **DO NOT START THE TEST IN THE SETUP**
+ - **DO NOT START THE TEST IN THE SETUP**\
 The setup script is *only* for preparing the environment, `up` should not be called, the user should be able to run the test at any time of their choosing following the setup.\
 **3. A `readme.md`**\
-This readme should have at least the following three parts, formatting isn't important, but a template is provided at `example.readme.md`
- - About
+This readme should have at least the following three parts, formatting isn't important, but a template is provided at `example.readme.md`\
+ - About\
 Describe what the goal of the test is, a brief explanation of what it does, what the environment should look like after the setup, e.g. an ascii tree of the directory structure, and how to set it up, i.e. any configuration/input/dependency is required for the setup script
- - Running
+ - Running\
 Explain how the test should be carried out, e.g. what commands to run and where
- - Validating
+ - Validating\
 Explain how the user can check if the test was successful, this could be an ascii tree of the expected result, or a script that checks automatically, any that provides consistent and accurate validation of the test
 ### Is that all?
 Your test directory is not at all limited to these three files, you can add any number of helper scripts, configuration files, validation scripts, etc.\
