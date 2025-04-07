@@ -213,6 +213,7 @@ endTimer:
 	; Get end time
 	mov	rax, 96
 	mov	rdi, endSeconds
+	xor	rsi, rsi
 	syscall
 	; Compare seconds
 	mov	rax, qword [endSeconds]

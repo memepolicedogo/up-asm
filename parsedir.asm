@@ -55,8 +55,7 @@ direntItr:
 	je	handleFile
 	cmp	bl, 4
 	je	handleDir
-	cmp	bl, 10
-	je	handleFile
+	cmp	bl, 10		; symlink
 	jmp	error
 handleDir:
 	inc	r13	; Get to name
@@ -70,27 +69,14 @@ handleDir:
 	cmp	byte [r13+2], 0
 	je	nextDent
 notdot:
-	; newpath
-	mov	rax, 9
-	mov	rdi, 0
-	mov	rsi, 0x1000
-	mov	rdx, 3
-	mov	r10, 0x22	; MAP_ANONYMOUS | MAP_PRIVATE
-	mov	r8, 0
-	mov	r9, 0
-	syscall
-	cmp	rax, 0
-	jl	error
-	push	rax	; Store new arg
-	mov	rbx, r15; Build from newpath
-dirNewNewpathItr:
-	mov	cl, [rbx]
-	mov	[rax], cl
-	inc	rbx
+	; Get to the end of newpath
+	mov	rax, r15
+dirNewPathLoop:
 	inc	rax
-	cmp	byte [rbx], 0
-	jne	dirNewNewpathItr
-	mov	rbx, r13; Build from filename
+	cmp	byte [rax], 0
+	jne	dirNewPathLoop
+	; Add filename to the end
+	mov	rbx, r13
 dirNewFilenameItr:
 	mov	cl, [rbx]
 	mov	[rax], cl
@@ -101,29 +87,17 @@ dirNewFilenameItr:
 	mov	byte [rax], 47; dir slash
 	inc	rax
 	mov	byte [rax], 0; Null term
+	; Store end of new path
+	push	rax
 
-	; oldpath
-	mov	rax, 9		; sys_mmap
-	mov	rdi, 0		; kernel determines addr
-	mov	rsi, 0x1000	; Length in hex
-	mov	rdx, 3		; PROT_READ | PROT_WRITE
-	mov	r10, 0x22	; MAP_ANONYMOUS | MAP_PRIVATE
-	; Null other fields
-	mov	r8, 0
-	mov	r9, 0
-	syscall
-	cmp	rax, 0
-	jl	error
-	; build old path
-	push	rax	; Save old path start
-	mov	rbx, r14
-dirOldDirnameItr:
-	mov	cl, [rbx]
-	mov	[rax], cl
-	inc	rbx
+	; Get to the end of oldpath
+	mov	rax, r14
+dirOldPathLoop:
 	inc	rax
-	cmp	byte [rbx], 0
-	jne	dirOldDirnameItr
+	cmp	byte [rax], 0
+	jne	dirOldPathLoop
+
+	; Add filename to the end
 	mov	rbx, r13
 dirOldFilenameItr:
 	mov	cl, [rbx]
@@ -135,21 +109,19 @@ dirOldFilenameItr:
 	mov	byte [rax], 47; dir slash
 	inc	rax
 	mov	byte [rax], 0	; Null terminator
+	; Store end of old path
+	push	rax
 	
-	pop	rdi	; old
-	pop	rsi	; new
 	; Store important stuff
 	push	r11
 	push	r12
 	push	r13
-	push	r14
-	push	r15
 	; Args
-	push	rsi
-	push	rdi
+	push	r15	; newpath
+	push	r14	; dirname
 	; Create new dir
 	mov	rax, 83
-	mov	rdi, rsi
+	mov	rdi, r15
 	mov	rsi, 0xffffffffffffffff
 	syscall
 	cmp	rax, -17
@@ -157,59 +129,53 @@ dirOldFilenameItr:
 	cmp	rax, 0
 	jl	error
 dirOldFilenameSkipErr:
-	call	parsedir	; WTF?????? RECURSION???
+	call	parsedir
+	; Restore args
+	pop	r14
+	pop	r15
 	; Delete old dir
 	mov	rax, 84
-	pop	rdi
+	mov	rdi, r14
 	syscall
 	cmp	rax, -39
 	je	dirDeleteOldDirSkipErr
 	cmp	rax, 0
 	jl	error
 dirDeleteOldDirSkipErr:
-	; Free
-	mov	rax, 11
-	mov	rsi, 0x1000
-	syscall
-	mov	rax, 11
-	pop	rdi	; new
-	mov	rsi, 0x1000
-	syscall
-	xor	rdi, rdi
 	; Restore regs
-	pop	r15
-	pop	r14
 	pop	r13
 	pop	r12
 	pop	r11
+	; Clean old path
+	pop	rax
+	dec	rax	; Already ends with null
+dirOldPathCleanLoop:
+	; Edit before check to remove the / we added
+	mov	byte [rax], 0
+	dec	rax
+	cmp	byte [rax], 47
+	jne	dirOldPathCleanLoop
+	; Clean new path
+	pop	rax
+	dec	rax
+dirNewPathCleanLoop:
+	mov	byte [rax], 0
+	dec	rax
+	cmp	byte [rax], 47
+	jne	dirNewPathCleanLoop
 	jmp	nextDent
 
 
 handleFile:
-	push	rbx
 	inc	r13	; Get to name
-	; oldpath
-	mov	rax, 9		; sys_mmap
-	mov	rdi, 0		; kernel determines addr
-	mov	rsi, 0x1000	; Length in hex
-	mov	rdx, 3		; PROT_READ | PROT_WRITE
-	mov	r10, 0x22	; MAP_ANONYMOUS | MAP_PRIVATE
-	; Null other fields
-	mov	r8, 0
-	mov	r9, 0
-	syscall
-	cmp	rax, 0
-	jl	error
-	; build old path
-	push	rax	; Save old path start
-	mov	rbx, r14
+	; get to the end of oldpath
+	mov	rax, r14
 fileOldDirnameItr:
-	mov	cl, [rbx]
-	mov	[rax], cl
-	inc	rbx
 	inc	rax
-	cmp	byte [rbx], 0
+	cmp	byte [rax], 0
 	jne	fileOldDirnameItr
+
+	; Add the filename to the end of oldpath
 	mov	rbx, r13
 fileOldFilenameItr:
 	mov	cl, [rbx]
@@ -219,62 +185,16 @@ fileOldFilenameItr:
 	cmp	byte [rbx], 0
 	jne	fileOldFilenameItr
 	mov	byte [rax], 0	; Null terminator
-	; Do some stupid shit for symlinks fuck
-	mov	rbx, [rsp+8]	; get tha jit
-	cmp	rbx, 10		; we linky?
-	jne	fileNewDirnameNotItr
-	; Make buffer for link read
-	mov	rax, 9		; sys_mmap
-	mov	rdi, 0		; kernel determines addr
-	mov	rsi, 0x1000	; Length in hex
-	mov	rdx, 3		; PROT_READ | PROT_WRITE
-	mov	r10, 0x22	; MAP_ANONYMOUS | MAP_PRIVATE
-	; Null other fields
-	mov	r8, 0
-	mov	r9, 0
-	syscall
-	cmp	rax, 0
-	jl	error
-	mov	rsi, rax	; New mem we just alloc'd
-	mov	rax, 89		; Readlink
-	pop	rdi		; previous mem we alloc'd
-	mov	rdx, 0x1000
-	syscall
-	cmp	rax, 0
-	jl	error
-	push	rsi		; Store new mem we alloc'd on the stack
-	add	rsi, rax	; Get to the end of the string
-	mov	byte [rsi], 0	; Add null term (Its probably 0 already but the manpage scared me)
-	; free
-	mov	rax, 11
-	mov	rsi, 0x1000
-	syscall
-
+	push	rax	; Store the end of the path
 	
-fileNewDirnameNotItr:
-
-	; newpath
-	mov	rax, 9		; sys_mmap
-	mov	rdi, 0		; kernel determines addr
-	mov	rsi, 0x1000	; Length in hex
-	mov	rdx, 3		; PROT_READ | PROT_WRITE
-	mov	r10, 0x22	; MAP_ANONYMOUS | MAP_PRIVATE
-	; Null other fields
-	mov	r8, 0
-	mov	r9, 0
-	syscall
-	cmp	rax, 0
-	jl	error
-	; build new path
-	push	rax	; Save new path start
-	mov	rbx, r15
+	; Get to end of newpath
+	mov	rax, r15
 fileNewDirnameItr:
-	mov	cl, [rbx]
-	mov	[rax], cl
-	inc	rbx
 	inc	rax
-	cmp	byte [rbx], 0
+	cmp	byte [rax], 0
 	jne	fileNewDirnameItr
+
+	; Add filename to end of newpath
 	mov	rbx, r13
 fileNewFilenameItr:
 	mov	cl, [rbx]
@@ -284,38 +204,37 @@ fileNewFilenameItr:
 	cmp	byte [rbx], 0
 	jne	fileNewFilenameItr
 	mov	byte [rax], 0	; Null terminator
+	push	rax	; Store the end of the path
 
 	; Link to new file
 	mov	rax, 86
-	pop	rsi	; Pop new into arg 2
-	pop	rdi	; Pop old into arg 1
-	pop	rbx	; its the type again
-	cmp	rbx, 10	; linky poo
-	jne	fileStooopppid911
-	add	rax, 2	; sys_link -> sys_symlink
-fileStooopppid911:
+	mov	rdi, r14	; Link oldpath
+	mov	rsi, r15	; To newpath
 	syscall
 	cmp	rax, 0
 	jl	error
-	; Save newpath
-	push	rsi
 	; Delete old file
 	mov	rax, 87
 	; Old path is alread in rdi
 	syscall
 	cmp	rax, 0
 	jl	error
-	; Free oldpath
-	mov	rax, 11
-	; Address still in rdi
-	mov	rsi, 0x1000
-	syscall
-	; Free newpath
-	mov	rax, 11
-	pop	rdi
-	syscall
-	xor	rsi, rsi
-	xor	rdi, rdi
+	; Clean up paths
+	pop	rax	; Get the end of oldpath
+	dec	rax	; end is alread null
+fileCleanOldPathLoop:
+	mov	byte [rax], 0
+	dec	rax
+	cmp	byte [rax], 47
+	jne	fileCleanOldPathLoop
+
+	pop	rax	; Get the end of newpath
+	dec	rax	; end is alread null
+fileCleanNewPathLoop:
+	mov	byte [rax], 0
+	dec	rax
+	cmp	byte [rax], 47
+	jne	fileCleanNewPathLoop
 nextDent:
 	; Reset for next dent
 	sub	r13, 3	; Gets to reclen
