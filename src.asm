@@ -1,4 +1,10 @@
+global verbose
+global nl
+global newPath
+global oldPath
 section .data
+	; Options
+	verbose:		db 0
 	; Messages
 	nl:			db 10
 	deltaSeconds:		times 64 db 0	; 64 byte buffer
@@ -302,8 +308,9 @@ parseOption:
 	inc	rax
 checkOption:
 	;Flag---Option--ASCII
-	;-h   |	help  |	104
-	;-t   |	timer |	116
+	;-h   |	help    |	104
+	;-t   |	timer   |	116
+	;-v   |	verbose |	118
 
 	mov	cl, [rax]	; Get char
 	or	cl, 10000b	; Make lowercase
@@ -311,6 +318,8 @@ checkOption:
 	je	help
 	cmp	cl, 116
 	je	startTimer
+	cmp	cl, 118
+	je	verboseMode
 	jmp	badArgs
 startTimer:
 	push	rax
@@ -319,6 +328,12 @@ startTimer:
 	mov	rdi, startSeconds
 	syscall
 	mov	byte [timerRunning], 1
+	pop	rax
+	jmp	multArgsLoop
+verboseMode:
+	push	rax
+	mov	rax, verbose
+	mov	byte [rax], 1
 	pop	rax
 	jmp	multArgsLoop
 

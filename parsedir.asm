@@ -1,3 +1,26 @@
+extern verbose
+extern nl
+extern newPath
+extern oldPath
+%macro newline 0
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, nl
+	mov	rdx, 1
+	syscall
+%endmacro
+section .data
+	linkFrom:	db "Moving "
+	linkFromLen	equ $-linkFrom
+	linkTo:		db " to "
+	linkToLen	equ $-linkTo
+	unlinkMsg:	db "Removing "
+	unlinkLen	equ $-unlinkMsg
+	mkdirMsg:	db "Creating directory "
+	mkdirLen	equ $-mkdirMsg
+	rmdirMsg:	db "Removing directory "
+	rmdirLen	equ $-rmdirMsg
+
 section .text
 global parsedir
 parsedir:
@@ -18,14 +41,10 @@ parsedir:
 	push	rax
 	mov	r13, rax
 	; Get args from stack
-	; dirname
-	mov	r14, qword [rsp+16]
-	; newpath
-	mov	r15, qword [rsp+24]
 	; Open dir
 	mov	rax, 257
 	mov	rdi, -100	; Relative to current dir
-	mov	rsi, r14	; dirname
+	mov	rsi, oldPath	; dirname
 	mov	rdx, 02204000q	; O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_DIRECTORY
 	syscall
 	cmp	rax, 0
@@ -64,8 +83,8 @@ newDirent:
 	cmp	rax, 0
 	jl	spawnError
 	je	return
-	mov	r11, rax
-	add	r11, r13	; end of the thing
+	mov	r14, rax
+	add	r14, r13	; end of the thing
 direntItr:
 	add	r13, 18		; Get to type
 	xor	rbx, rbx
@@ -90,7 +109,7 @@ handleDir:
 	je	nextDent
 notdot:
 	; Get to the end of newpath
-	mov	rax, r15
+	mov	rax, newPath
 dirNewPathLoop:
 	inc	rax
 	cmp	byte [rax], 0
@@ -111,7 +130,7 @@ dirNewFilenameItr:
 	push	rax
 
 	; Get to the end of oldpath
-	mov	rax, r14
+	mov	rax, oldPath
 dirOldPathLoop:
 	inc	rax
 	cmp	byte [rax], 0
@@ -131,17 +150,38 @@ dirOldFilenameItr:
 	mov	byte [rax], 0	; Null terminator
 	; Store end of old path
 	push	rax
+
+	mov	rax, verbose
+	cmp	byte [rax], 0
+	je	mkdir
+	; Print message
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, mkdirMsg
+	mov	rdx, mkdirLen
+	syscall
+	; Get length of new path
+	pop	rdi ; temp
+	pop	rdx ; end of new path
+	push	rdx 
+	push	rdi
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, newPath
+	sub	rdx, newPath	; newPathEnd -= newPath
+	
+	syscall
+	newline
+
+mkdir:
 	
 	; Store important stuff
-	push	r11
+	push	r14
 	push	r12
 	push	r13
-	; Args
-	push	r15	; newpath
-	push	r14	; dirname
 	; Create new dir
 	mov	rax, 83
-	mov	rdi, r15
+	mov	rdi, newPath
 	mov	rsi, 0xffffffffffffffff
 	syscall
 	cmp	rax, -17
@@ -152,22 +192,41 @@ dirOldFilenameSkipErr:
 	call	parsedir
 	cmp	rax, 0
 	jl	bubbleError
-	; Restore args
+	; Restore regs
+	pop	r13
+	pop	r12
 	pop	r14
-	pop	r15
+
+	mov	rax, verbose
+	cmp	byte [rax], 0
+	je	rmdir
+	; Print message
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, rmdirMsg
+	mov	rdx, rmdirLen
+	syscall
+	; Get length of old path
+	pop	rdx ; end of old path
+	push	rdx 
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, oldPath
+	sub	rdx, oldPath	; oldPathEnd -= oldPath
+	
+	syscall
+	newline
+
+rmdir:
 	; Delete old dir
 	mov	rax, 84
-	mov	rdi, r14
+	mov	rdi, oldPath
 	syscall
 	cmp	rax, -39
 	je	dirDeleteOldDirSkipErr
 	cmp	rax, 0
 	jl	spawnError
 dirDeleteOldDirSkipErr:
-	; Restore regs
-	pop	r13
-	pop	r12
-	pop	r11
 	; Clean old path
 	pop	rax
 	dec	rax	; Already ends with null
@@ -191,7 +250,7 @@ dirNewPathCleanLoop:
 handleFile:
 	inc	r13	; Get to name
 	; get to the end of oldpath
-	mov	rax, r14
+	mov	rax, oldPath
 fileOldDirnameItr:
 	inc	rax
 	cmp	byte [rax], 0
@@ -210,7 +269,7 @@ fileOldFilenameItr:
 	push	rax	; Store the end of the path
 	
 	; Get to end of newpath
-	mov	rax, r15
+	mov	rax, newPath
 fileNewDirnameItr:
 	inc	rax
 	cmp	byte [rax], 0
@@ -228,16 +287,77 @@ fileNewFilenameItr:
 	mov	byte [rax], 0	; Null terminator
 	push	rax	; Store the end of the path
 
+	mov	rax, verbose
+	cmp	byte [rax], 0
+	je	link
+	; Print message
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, linkFrom
+	mov	rdx, linkFromLen
+	syscall
+	; Get length of old path
+	pop	rdi ; temp
+	pop	rdx ; end of old path
+	push	rdx 
+	push	rdi ; restore the stack
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, oldPath
+	sub	rdx, oldPath	; oldPathEnd -= oldPath
+	
+	syscall
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, linkTo
+	mov	rdx, linkToLen
+	syscall
+	; Get length of new path
+	pop	rdx ; end of new path
+	push	rdx ; restore the stack
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, newPath
+	sub	rdx, newPath	; newPathEnd -= newPath
+	
+	syscall
+	newline
+
+link:
 	; Link to new file
 	mov	rax, 86
-	mov	rdi, r14	; Link oldpath
-	mov	rsi, r15	; To newpath
+	mov	rdi, oldPath	; Link oldpath
+	mov	rsi, newPath	; To newpath
 	syscall
 	cmp	rax, 0
 	jl	spawnError
+
+	mov	rax, verbose
+	cmp	byte [rax], 0
+	je	unlink
+	; Print message
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, unlinkMsg
+	mov	rdx, unlinkLen
+	syscall
+	; Get length of old path
+	pop	rdi ; temp
+	pop	rdx ; end of old path
+	push	rdx 
+	push	rdi ; restore the stack
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, oldPath
+	sub	rdx, oldPath	; oldPathEnd -= oldPath
+	
+	syscall
+	newline
+
+unlink:
 	; Delete old file
 	mov	rax, 87
-	; Old path is alread in rdi
+	mov	rdi, oldPath
 	syscall
 	cmp	rax, 0
 	jl	spawnError
@@ -264,7 +384,7 @@ nextDent:
 	mov	al, byte [r13]
 	sub	rax, 16
 	add	r13, rax	; Gets to end of the line
-	cmp	r13, r11	; are we at the end of the jit
+	cmp	r13, r14	; are we at the end of the jit
 	jl	direntItr
 	jge	newDirent
 
