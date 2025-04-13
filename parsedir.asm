@@ -62,7 +62,8 @@ newDirent:
 	; edge of the 8 byte boundry you'll get a full
 	; row of padding after that
 	cmp	rax, 0
-	jl	return
+	jl	spawnError
+	je	return
 	mov	r11, rax
 	add	r11, r13	; end of the thing
 direntItr:
