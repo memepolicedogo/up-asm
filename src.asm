@@ -1,5 +1,6 @@
 section .data
 	; Messages
+	nl:			db 10
 	deltaSeconds:		times 64 db 0	; 64 byte buffer
 				db "s",10
 	deltaMicroseconds:	times 64 db 0	; 64 byte buffer
@@ -21,9 +22,38 @@ section .data
 	badArgsLen		equ $-badArgsErr
 	unknownErr:		db "An unexpected error has occured",10
 	unknownLen		equ $-unknownErr
+	accesErr:		db "Permission denied",10
+	accesLen		equ $-accesErr
+	againErr:		db "Resource temporarily unavailable",10
+	againLen		equ $-againErr
+	invalErr:		db "Invalid argument",10
+	invalLen		equ $-invalErr
+	noMemErr:		db "Cannot allocate memory",10
+	noMemLen		equ $-noMemErr
+	mFileErr:		db "Too many open files",10
+	mFileLen		equ $-mFileErr
+	nameTooLongErr:		db "File name too long (buffer overflow?)",10
+	nameTooLongLen		equ $-nameTooLongErr
+	notDirErr:		db "Not a directory",10
+	notDirLen		equ $-notDirErr
+	badFErr:		db "Bad file descriptor",10
+	badFLen			equ $-badFErr
+	faultErr:		db "Bad address",10
+	faultLen		equ $-faultErr
+	noEntErr:		db "No such file or directory",10
+	noEntLen		equ $-noEntErr
 	; Error message template
 	Err:			db "Message",10
 	Len			equ $-Err
+	; Error context messages
+	errnoMsg:		db "Error Number: "
+	errnoLen		equ $-errnoMsg
+	recurrsionMsg:		db "Recursion Depth: "
+	recurrsionLen:		equ $-recurrsionMsg
+	newPathMsg:		db "New Path: "
+	newPathLen		equ $-newPathMsg
+	oldPathMsg:		db "Old Path: "
+	oldPathLen		equ $-oldPathMsg
 	; Timer memory
 	startSeconds:
 		dq	0
@@ -42,49 +72,201 @@ section .bss
 	argc		resq 1
 	writebuffer	resb 265
 section .text
+%macro newline 0
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, nl
+	mov	rdx, 1
+	syscall
+%endmacro
+
+%macro printmsg	1
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, %1Msg
+	mov	rdx, %1Len
+	syscall
+%endmacro
+
+%macro printerr 1
+	mov	rax, 1
+	mov	rdi, 2
+	mov	rsi, %1Err
+	mov	rdx, %1Len
+	syscall
+%endmacro
 extern parsedir
 ;----Errors/Messages----;
-template:
+parsedirError:
+	; Print context
+	; Convert errno to positive
+	xor	rax, 0xFFFFFFFFFFFFFFFF
+	cmp	rax, 0
+	jne	unknown
+	push	rax	; For checking error
+	push	rbx	; For recursion depth
+	push	rax	; For printing errno
+	printmsg errno
+	pop	rax
+	mov	rbx, 10
+	mov	rcx, writebuffer
+	mov	r8, 0
+errnoConvertLoop:
+	xor	rdx, rdx
+	div	rbx
+	add	rdx, 48
+	mov	[rcx], dl
+	inc	r8
+	inc	rcx
+	cmp	rax, 0
+	jne	errnoConvertLoop
+	; Print errno
 	mov	rax, 1
-	mov	rdi, 1
-	mov	rsi, Err
-	mov	rdx, Len
+	mov	rdi, 2
+	mov	rsi, writebuffer
+	mov	rdx, r8
 	syscall
+	newline
+%ifdef DEBUG
+	; Print recursion depth
+	printmsg recurrsion
+	pop	rax
+	mov	rbx, 10
+	mov	rcx, writebuffer
+	mov	r8, 0
+recurrsionConvertLoop:
+	xor	rdx, rdx
+	div	rbx
+	add	rdx, 48
+	mov	[rcx], dl
+	inc	r8
+	inc	rcx
+	cmp	rax, 0
+	jne	recurrsionConvertLoop
+	; Print depth
+	mov	rax, 1
+	mov	rdi, 2
+	mov	rsi, writebuffer
+	mov	rdx, r8
+	syscall
+	newline
+	; Print newpath
+	printmsg newPath
+	mov	rsi, newPath
+newPathPrintLoop:
+	mov	rax, 1
+	mov	rdi, 2
+	mov	rdx, 1
+	syscall
+	inc	rsi
+	cmp	byte [rsi], 0
+	jne	newPathPrintLoop
+	newline
+	; Print oldpath
+	printmsg oldPath
+	mov	rsi, oldPath
+oldPathPrintLoop:
+	mov	rax, 1
+	mov	rdi, 2
+	mov	rdx, 1
+	syscall
+	inc	rsi
+	cmp	byte [rsi], 0
+	jne	oldPathPrintLoop
+	newline
+%else
+	pop	rax	; Clear recursion depth from the stack
+%endif
+; Parsedir errors by syscall
+	pop	rax
+; mmap
+; EACCES
+	cmp	rax, 13
+	je	noPerm
+; EAGAIN
+	cmp	rax, 11
+	je	unavaliable
+; EINVAL
+	cmp	rax, 22
+	je	invalid
+; ENOMEM
+	cmp	rax, 12
+	je	noMem
+; openat
+; EMFILE
+	cmp	rax, 24
+	je	noFiles
+; ENAMETOOLONG
+	cmp	rax, 36
+	je	passedFileNameWasTooLongForTheKernelToHandleProbablyBecausePathBufferOverflowed
+; ENOTDIR
+	cmp	rax, 20
+	je	noDir
+; getdents64
+; EBADF
+	cmp	rax, 9
+	je	badFile
+; EFAULT
+	cmp	rax, 14
+	je	badMem
+; ENOENT
+	cmp	rax, 2
+	je	noEnt
+	jne	unknown
+noPerm:
+	printerr acces
 	jmp	exitError
+
+unavaliable:
+	printerr again
+	jmp	exitError
+
+invalid:
+	printerr inval
+	jmp	exitError
+
+noMem:
+	printerr noMem
+	jmp	exitError
+
+noFiles:
+	printerr mFile
+	jmp	exitError
+
+passedFileNameWasTooLongForTheKernelToHandleProbablyBecausePathBufferOverflowed:
+	printerr nameTooLong
+	jmp	exitError
+
+noDir:
+	printerr notDir
+	jmp	exitError
+
+badFile:
+	printerr badF
+	jmp	exitError
+
+badMem:
+	printerr fault
+	jmp	exitError
+
+noEnt:
+	printerr noEnt
+	jmp	exitError
+
 help:
-	mov	rax, 1
-	mov	rdi, 1
-	mov	rsi, helpMsg
-	mov	rdx, helpLen
-	syscall
+	printmsg help
 	jmp	exitSuccess
 tooManyArgs:
-	mov	rax, 1
-	mov	rdi, 1
-	mov	rsi, tooManyArgsErr
-	mov	rdx, tooManyArgsLen
-	syscall
+	printerr tooManyArgs
 	jmp	exitError
 insideTarget:
-	mov	rax, 1
-	mov	rdi, 1
-	mov	rsi, insideTargetErr
-	mov	rdx, insideTargetLen
-	syscall
+	printerr insideTarget
 	jmp	exitError
 badArgs:
-	mov	rax, 1
-	mov	rdi, 1
-	mov	rsi, badArgsErr
-	mov	rdx, badArgsLen
-	syscall
+	printerr badArgs
 	jmp	exitError
 unknown:
-	mov	rax, 1
-	mov	rdi, 1
-	mov	rsi, unknownErr
-	mov	rdx, unknownLen
-	syscall
+	printerr unknown
 	jmp	exitError
 ;---------Main----------;
 global _start
@@ -185,6 +367,8 @@ startMove:
 	push	newPath
 	push	oldPath
 	call	parsedir
+	cmp	rax, 0
+	jne	parsedirError
 	; Remove the base of the old structure
 	mov	rax, 84
 	mov	rdi, oldPath

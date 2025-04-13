@@ -13,7 +13,7 @@ parsedir:
 	mov	r9, 0
 	syscall
 	cmp	rax, 0
-	jl	error
+	jl	spawnError
 	; Save buffer pointer
 	push	rax
 	mov	r13, rax
@@ -29,24 +29,43 @@ parsedir:
 	mov	rdx, 02204000q	; O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_DIRECTORY
 	syscall
 	cmp	rax, 0
-	jl	error
+	jl	spawnError
 	; Store fd
 	mov	r12, rax
 	; Get info
+newDirent:
+	pop	r13
+	push	r13
 	mov	rax, 217
 	mov	rdi, r12
 	mov	rsi, r13
 	mov	rdx, 0x8000
 	syscall
+	; Dirent:
+	; qword Inode number
+	; qword Offset (sequence)
+	; word  Length of remaining content
+	; byte  File type
+	; char* Filename
+	; null bytes to align along 8 bytes
+	; e.g.
+	; All of this is small endian btw
+	;0x00 db 12,34,56,78,12,34,56,78	; Inode
+	;0x08 db 01,00,00,00,00,00,00,00	; Offset
+	;0x10 db 24,00				; Length
+	;0x10 db 04				; Type
+	;0x10 db 'a','b','c'			; Name
+	;0x10 db 00,00				; Padding
+	; Technically one byte of the padding is a 
+	; null terminator for the filename therefore 
+	; if the last char of your filename is at the
+	; edge of the 8 byte boundry you'll get a full
+	; row of padding after that
 	cmp	rax, 0
-	jl	error
-	; i dont wanna have to write shit for big ass mfs I'm so tired
-	cmp	rax, 0x8000
-	je	error
+	jl	return
 	mov	r11, rax
 	add	r11, r13	; end of the thing
 direntItr:
-	inc	r11
 	add	r13, 18		; Get to type
 	xor	rbx, rbx
 	mov	bl, [r13]	; Get type
@@ -56,7 +75,7 @@ direntItr:
 	cmp	bl, 4
 	je	handleDir
 	cmp	bl, 10		; symlink
-	jmp	error
+	jmp	die
 handleDir:
 	inc	r13	; Get to name
 	; Skip '.' and ".."
@@ -127,9 +146,11 @@ dirOldFilenameItr:
 	cmp	rax, -17
 	je	dirOldFilenameSkipErr
 	cmp	rax, 0
-	jl	error
+	jl	spawnError
 dirOldFilenameSkipErr:
 	call	parsedir
+	cmp	rax, 0
+	jl	bubbleError
 	; Restore args
 	pop	r14
 	pop	r15
@@ -140,7 +161,7 @@ dirOldFilenameSkipErr:
 	cmp	rax, -39
 	je	dirDeleteOldDirSkipErr
 	cmp	rax, 0
-	jl	error
+	jl	spawnError
 dirDeleteOldDirSkipErr:
 	; Restore regs
 	pop	r13
@@ -212,13 +233,13 @@ fileNewFilenameItr:
 	mov	rsi, r15	; To newpath
 	syscall
 	cmp	rax, 0
-	jl	error
+	jl	spawnError
 	; Delete old file
 	mov	rax, 87
 	; Old path is alread in rdi
 	syscall
 	cmp	rax, 0
-	jl	error
+	jl	spawnError
 	; Clean up paths
 	pop	rax	; Get the end of oldpath
 	dec	rax	; end is alread null
@@ -242,19 +263,31 @@ nextDent:
 	mov	al, byte [r13]
 	sub	rax, 16
 	add	r13, rax	; Gets to end of the line
-	cmp	qword [r13], 0	; I hope this is chill
-	jne	direntItr
+	cmp	r13, r11	; are we at the end of the jit
+	jl	direntItr
+	jge	newDirent
 
 return:
-	; free memory
+	; Close fd
+	mov	rax, 3
+	mov	rdi, r12
+	syscall
+	; Free memory
 	mov	rax, 11
 	pop	rdi		; Get mem address off the stack
 	mov	rsi, 0x8000
 	syscall
+	mov	rax, 0
 	ret
 
-error:
-	; Kill the whole jit
+spawnError:
+	mov	rbx, 1
+	ret
+
+bubbleError:
+	inc	rbx
+	ret
+die:
 	mov	rax, 60
 	mov	rdi, 1
 	syscall

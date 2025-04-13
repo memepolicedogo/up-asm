@@ -12,7 +12,7 @@ fi
 opts="-f elf64"
 if [[ -n $1 && $1 == "debug" ]];
 then
-	opts="-f elf64 -g -F dwarf"
+	opts="-f elf64 -g -F dwarf -dDEBUG"
 	echo "Building with options \"$opts\""
 fi
 
