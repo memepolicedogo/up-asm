@@ -27,6 +27,8 @@ parsedir:
 	; Alocate memory for dents
 	mov	rax, 9		; sys_mmap
 	mov	rdi, 0		; kernel determines addr
+	; Push a null value to the stack to help with cleanup
+	push	rdi
 	mov	rsi, 0x8000	; Length in hex
 	mov	rdx, 3		; PROT_READ | PROT_WRITE
 	mov	r10, 0x22	; MAP_ANONYMOUS | MAP_PRIVATE
@@ -397,16 +399,20 @@ return:
 	pop	rdi		; Get mem address off the stack
 	mov	rsi, 0x8000
 	syscall
-	mov	rax, 0
+	pop	rax	; Remove null delimnator and set errno to 0
 	ret
 
 spawnError:
 	mov	rbx, 1
+cleanStack:
+	pop	rcx
+	cmp	rcx, 0
+	jne	cleanStack
 	ret
 
 bubbleError:
 	inc	rbx
-	ret
+	jmp	cleanStack
 die:
 	mov	rax, 60
 	mov	rdi, 1

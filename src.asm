@@ -11,14 +11,22 @@ section .data
 				db "s",10
 	deltaMicroseconds:	times 64 db 0	; 64 byte buffer
 				db "us", 10
+	deltaNanosec:		times 64 db 0	; 64 byte buffer
+				db "ns", 10
 	helpMsg:	
 			db "Usage: up [options] <dir>",10
 			db "Shifts the contents of a directory up one step",10
 			db 10
 			db 9,"Options:",10
-			db 9,"-t",9,"Prints the execution time in microseconds after execution",10
+			db 9,"-t(R)",9,"Prints the real world time between calling and exiting of the process",10
+			db 9,"-tC",9,"Prints the CPU time of the process",10
+			db 9,"-tA",9,"Prints both real time and CPU time",10
 			db 9,"-v",9,"Prints information about each file system operation before it executes", 10
 	helpLen			equ $-helpMsg
+	cpuTimeMsg:		db "CPU time:",10
+	cpuTimeLen		equ $-cpuTimeMsg
+	realTimeMsg:		db "Real time:",10
+	realTimeLen		equ $-realTimeMsg
 	tooManyArgsErr:		db "Too many args were passed",10
 				db "Use -h for help",10
 	tooManyArgsLen		equ $-tooManyArgsErr
@@ -49,6 +57,8 @@ section .data
 	faultLen		equ $-faultErr
 	noEntErr:		db "No such file or directory",10
 	noEntLen		equ $-noEntErr
+	existErr:		db "New file exists",10
+	existLen		equ $-existErr
 	; Error message template
 	Err:			db "Message",10
 	Len			equ $-Err
@@ -62,6 +72,17 @@ section .data
 	oldPathMsg:		db "Old Path: "
 	oldPathLen		equ $-oldPathMsg
 	; Timer memory
+	timerSignal:
+		dd 1
+		dd 1
+		dd 1
+		dd 1
+	cpuStart:
+		dq	0
+		dq	0 
+	cpuEnd:
+		dq 0
+		dq 0
 	startSeconds:
 		dq	0
 	startMicroseconds:
@@ -108,8 +129,9 @@ parsedirError:
 	; Print context
 	; Convert errno to positive
 	xor	rax, 0xFFFFFFFFFFFFFFFF
+	inc	rax
 	cmp	rax, 0
-	jne	unknown
+	jle	unknown
 	push	rax	; For checking error
 	push	rbx	; For recursion depth
 	push	rax	; For printing errno
@@ -117,6 +139,7 @@ parsedirError:
 	pop	rax
 	mov	rbx, 10
 	mov	rcx, writebuffer
+	add	rcx, 255
 	mov	r8, 0
 errnoConvertLoop:
 	xor	rdx, rdx
@@ -124,13 +147,14 @@ errnoConvertLoop:
 	add	rdx, 48
 	mov	[rcx], dl
 	inc	r8
-	inc	rcx
+	dec	rcx
 	cmp	rax, 0
 	jne	errnoConvertLoop
+	inc	rcx
 	; Print errno
 	mov	rax, 1
 	mov	rdi, 2
-	mov	rsi, writebuffer
+	mov	rsi, rcx
 	mov	rdx, r8
 	syscall
 	newline
@@ -213,6 +237,9 @@ oldPathPrintLoop:
 ; EBADF
 	cmp	rax, 9
 	je	badFile
+; EEXIST
+	cmp	rax, 17
+	je	exist
 ; EFAULT
 	cmp	rax, 14
 	je	badMem
@@ -250,6 +277,10 @@ noDir:
 
 badFile:
 	printerr badF
+	jmp	exitError
+
+exist:
+	printerr exist
 	jmp	exitError
 
 badMem:
@@ -323,12 +354,43 @@ checkOption:
 	je	verboseMode
 	jmp	badArgs
 startTimer:
+	; Check timer type
+	inc	rax
+	cmp	byte [rax], 0
+	je	realTime
+	cmp	byte [rax], 82
+	je	realTime
+	cmp	byte [rax], 67
+	je	cpuTime
+	cmp	byte [rax], 65
+	jne	badArgs
+cpuTime:
+	push	rax
+	; sys_clock_gettime
+	mov	rax, 228
+	mov	rdi, 2		; CLOCK_PROCESS_CPUTIME_ID
+	mov	rsi, cpuStart
+	syscall
+	cmp	rax, 0
+	jne	unknown
+	; Arm the timer to expire in 1 microsecond
+	pop	rax
+	mov	byte [timerRunning], 2
+	cmp	byte [rax], 65
+	jne	multArgsLoop
+	
+
+realTime:
+	cmp	byte [rax], 0
+	jne	realTimeSkip
+	dec	rax
+realTimeSkip:
 	push	rax
 	; sys_gettimeofday
 	mov	rax, 96
 	mov	rdi, startSeconds
 	syscall
-	mov	byte [timerRunning], 1
+	inc	byte [timerRunning]
 	pop	rax
 	jmp	multArgsLoop
 verboseMode:
@@ -404,15 +466,70 @@ wasDir:
 cleanUp:
 	cmp	byte [timerRunning], 0
 	je	exitSuccess
-	jne	endTimer
-
-
-endTimer:
-	; Get end time
 	mov	rax, 96
 	mov	rdi, endSeconds
 	xor	rsi, rsi
 	syscall
+	cmp	byte [timerRunning], 1
+	je	endRealTime
+	mov	rax, 228
+	mov	rdi, 2
+	mov	rsi, cpuEnd
+	syscall
+	cmp	byte [timerRunning], 2
+	je	endCPUTime
+	jg	endBoth
+
+endBoth:
+	printmsg cpuTime
+endCPUTime:
+	; Get time
+cpuTimeNano:
+	mov	rax, cpuEnd
+	add	rax, 8
+	mov	rbx, qword [rax]
+	push	rbx
+	mov	rax, cpuStart
+	add	rax, 8
+	mov	rbx, qword [rax]
+	pop	rax
+	sub	rax, rbx
+	; Print out
+	mov	rbx, 10
+	mov	rcx, deltaNanosec
+	add	rcx, 64
+	mov	r8, 3	; Length counter
+cpuNanosecLoop:
+	dec	rcx
+	xor	rdx, rdx
+	div	rbx
+	add	dl, 48
+	mov	[rcx], dl
+	inc	r8
+	cmp	rax, 0
+	jne	cpuNanosecLoop
+	; Print
+	mov	rax, 1
+	mov	rdi, 1
+	mov	rsi, rcx
+	mov	rdx, r8
+	syscall
+
+	cmp	byte [timerRunning], 3
+	jne	exitSuccess
+	
+	; Clean delta second buffer
+	mov	rax, deltaSeconds
+dsbuffcleanloop:
+	mov	qword [rax], 0
+	add	rax, 8
+	cmp	rax, deltaSeconds+64
+	jl	dsbuffcleanloop
+
+	printmsg realTime
+
+endRealTime:
+	; Get end time
 	; Compare seconds
 	mov	rax, qword [endSeconds]
 	mov	rbx, qword [startSeconds]
