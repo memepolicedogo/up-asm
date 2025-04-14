@@ -17,6 +17,7 @@ section .data
 			db 10
 			db 9,"Options:",10
 			db 9,"-t",9,"Prints the execution time in microseconds after execution",10
+			db 9,"-v",9,"Prints information about each file system operation before it executes", 10
 	helpLen			equ $-helpMsg
 	tooManyArgsErr:		db "Too many args were passed",10
 				db "Use -h for help",10
@@ -379,8 +380,6 @@ safePathLoop:
 	mov	byte [rdx], 47
 startMove:
 	; Call the function
-	push	newPath
-	push	oldPath
 	call	parsedir
 	cmp	rax, 0
 	jne	parsedirError

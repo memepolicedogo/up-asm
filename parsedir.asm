@@ -24,7 +24,6 @@ section .data
 section .text
 global parsedir
 parsedir:
-	; void parsedir(char[] *dirname, char[] *newpath)
 	; Alocate memory for dents
 	mov	rax, 9		; sys_mmap
 	mov	rdi, 0		; kernel determines addr
